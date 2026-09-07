@@ -1,5 +1,5 @@
 import pandas as pd
-import matplotlib.pyplot as plt
+
 
 
 data = pd.read_csv('dataset_gia_nha.csv')
@@ -45,7 +45,7 @@ for i in range(epochs):
     m1,m2,b = gradient_descent(m1,m2,b,data,L)
 
 print(f"m1 = {m1},m2 = {m2},b = {b}")
-print(f"Phương trình: y_pred = {m1}*x1 + {m2}*x2 + {b}")
+print(f"Đường thẳng dự đoán : price = {m1} * area + {m2} * room + {b}")
 
 
 print("-----Dự đoán-----")
