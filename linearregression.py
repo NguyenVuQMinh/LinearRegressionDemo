@@ -49,7 +49,7 @@ print(f"Đường thẳng dự đoán : price = {m1} * area + {m2} * room + {b}"
 
 
 print("-----Dự đoán-----")
-x1 = int(input("Nhập vào diện tích: "))
+x1 = int(input("Nhập vào diện tích (m2): "))
 x2 = int(input("Nhập vào số phòng: "))
 gia = predict(m1,m2,b,x1,x2)
 print(f"Giá dự đoán là: {gia:.2f} tỉ vnđ")
