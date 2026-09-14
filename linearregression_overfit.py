@@ -60,6 +60,13 @@ def build_polynomial_features(x, degree):
     return X_poly
 
 
+def scale_polynomial_features(X_train, X_other):
+    """Scale polynomial columns using only statistics from the train set."""
+    feature_scales = np.std(X_train, axis=0)
+    feature_scales[feature_scales == 0] = 1
+    return X_train / feature_scales, X_other / feature_scales, feature_scales
+
+
 def compute_mse(y_true, y_pred):
     return np.mean((y_true - y_pred) ** 2)
 
@@ -89,17 +96,21 @@ def gradient_descent_poly(X_poly, y, m, b, L):
 
 
 # Chuan bi du lieu dang numpy
-X_train_poly = build_polynomial_features(train_data["x_norm"], DEGREE)
+X_train_poly_raw = build_polynomial_features(train_data["x_norm"], DEGREE)
 y_train = train_data["y_gia_nha_ty"].to_numpy()
 
-X_val_poly = build_polynomial_features(val_data["x_norm"], DEGREE)
+X_val_poly_raw = build_polynomial_features(val_data["x_norm"], DEGREE)
 y_val = val_data["y_gia_nha_ty"].to_numpy()
+
+X_train_poly, X_val_poly, overfit_scales = scale_polynomial_features(
+    X_train_poly_raw, X_val_poly_raw
+)
 
 # Khoi tao he so
 m = np.zeros(DEGREE)
 b = 0.0
 
-L = 0.05
+L = 0.01
 epochs = 3000
 
 train_losses = []
@@ -140,7 +151,8 @@ plt.show()
 
 # 4b. Scatter du lieu + duong cong du doan
 x_range = np.linspace(train_data["x_norm"].min(), train_data["x_norm"].max(), 300)
-X_range_poly = build_polynomial_features(x_range, DEGREE)
+X_range_poly_raw = build_polynomial_features(x_range, DEGREE)
+X_range_poly = X_range_poly_raw / overfit_scales
 y_range_pred = predict_poly(X_range_poly, m, b)
 
 plt.figure(figsize=(8, 5))
@@ -195,14 +207,15 @@ def train_polynomial(degree, X_train_poly, y_train, X_val_poly, y_val,
 print("=== Thu nghiem nhieu bac da thuc (chon degree tot nhat theo validate) ===")
 
 degrees_to_try = range(1, 11)
-L_search = 0.05
+L_search = 0.01
 epochs_search = 3000
 
 results = {}
 
 for d in degrees_to_try:
-    X_tr = build_polynomial_features(train_data["x_norm"], d)
-    X_va = build_polynomial_features(val_data["x_norm"], d)
+    X_tr_raw = build_polynomial_features(train_data["x_norm"], d)
+    X_va_raw = build_polynomial_features(val_data["x_norm"], d)
+    X_tr, X_va, degree_scales = scale_polynomial_features(X_tr_raw, X_va_raw)
 
     m_d, b_d, tr_losses, va_losses = train_polynomial(
         d, X_tr, y_train, X_va, y_val, L_search, epochs_search
@@ -212,7 +225,8 @@ for d in degrees_to_try:
     results[d] = {
         "m": m_d, "b": b_d,
         "train_losses": tr_losses, "val_losses": va_losses,
-        "final_val_loss": final_val_loss
+        "final_val_loss": final_val_loss,
+        "scales": degree_scales
     }
 
     print(f"Degree {d:2d}: final_train_mse={tr_losses[-1]:.4f}, "
@@ -222,10 +236,20 @@ for d in degrees_to_try:
 best_degree = min(results, key=lambda d: results[d]["final_val_loss"])
 print(f"\n>>> Degree tot nhat theo validate set: {best_degree}")
 
-X_test_poly_overfit = build_polynomial_features(test_data["x_norm"], DEGREE)
+GOOD_DEGREE = best_degree
+good_result = results[GOOD_DEGREE]
+good_m = good_result["m"]
+good_b = good_result["b"]
+good_train_losses = good_result["train_losses"]
+good_val_losses = good_result["val_losses"]
+good_scales = good_result["scales"]
+
+X_test_poly_overfit_raw = build_polynomial_features(test_data["x_norm"], DEGREE)
+X_test_poly_overfit = X_test_poly_overfit_raw / overfit_scales
 y_test = test_data["y_gia_nha_ty"].to_numpy()
 
-X_test_poly_good = build_polynomial_features(test_data["x_norm"], GOOD_DEGREE)
+X_test_poly_good_raw = build_polynomial_features(test_data["x_norm"], GOOD_DEGREE)
+X_test_poly_good = X_test_poly_good_raw / good_scales
 
 test_mse_overfit = compute_mse(y_test, predict_poly(X_test_poly_overfit, m, b))
 test_mse_good = compute_mse(
@@ -264,10 +288,12 @@ plt.show()
 # 7b. So sanh duong cong du doan: Overfit vs Good Fit
 x_range = np.linspace(train_data["x_norm"].min(), train_data["x_norm"].max(), 300)
 
-X_range_overfit = build_polynomial_features(x_range, DEGREE)
+X_range_overfit_raw = build_polynomial_features(x_range, DEGREE)
+X_range_overfit = X_range_overfit_raw / overfit_scales
 y_range_overfit = predict_poly(X_range_overfit, m, b)
 
-X_range_good = build_polynomial_features(x_range, GOOD_DEGREE)
+X_range_good_raw = build_polynomial_features(x_range, GOOD_DEGREE)
+X_range_good = X_range_good_raw / good_scales
 y_range_good = predict_poly(X_range_good, good_m, good_b)
 
 fig, axes = plt.subplots(1, 2, figsize=(14, 5))
