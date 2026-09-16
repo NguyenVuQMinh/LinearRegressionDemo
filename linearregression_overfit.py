@@ -45,7 +45,7 @@ print(f"\nKiem tra train x_norm: mean={train_data['x_norm'].mean():.4f}, "
 
 # ===== Bước 3: Xây dựng feature đa thức + Gradient Descent overfitting =====
 
-DEGREE = 10  # bậc đa thức cao -> dễ overfitting với ít dữ liệu
+DEGREE = 40  # bậc rất cao để tạo mô hình nội suy overfitting
 
 def build_polynomial_features(x, degree):
     """
@@ -95,6 +95,13 @@ def gradient_descent_poly(X_poly, y, m, b, L):
     return m_new, b_new
 
 
+def fit_polynomial_least_squares(X_poly, y):
+    """Fit mô hình đa thức bậc cao để minh họa nội suy trên train set."""
+    X_with_bias = np.column_stack([np.ones(len(X_poly)), X_poly])
+    coefficients = np.linalg.lstsq(X_with_bias, y, rcond=None)[0]
+    return coefficients[1:], coefficients[0]
+
+
 # Chuan bi du lieu dang numpy
 X_train_poly_raw = build_polynomial_features(train_data["x_norm"], DEGREE)
 y_train = train_data["y_gia_nha_ty"].to_numpy()
@@ -106,31 +113,10 @@ X_train_poly, X_val_poly, overfit_scales = scale_polynomial_features(
     X_train_poly_raw, X_val_poly_raw
 )
 
-# Khoi tao he so
-m = np.zeros(DEGREE)
-b = 0.0
-
-L = 0.01
-epochs = 3000
-
-train_losses = []
-val_losses = []
-
-for epoch in range(epochs):
-    m, b = gradient_descent_poly(X_train_poly, y_train, m, b, L)
-
-    # Tinh loss tren ca train va validate sau moi epoch
-    train_pred = predict_poly(X_train_poly, m, b)
-    val_pred = predict_poly(X_val_poly, m, b)
-
-    train_mse = compute_mse(y_train, train_pred)
-    val_mse = compute_mse(y_val, val_pred)
-
-    train_losses.append(train_mse)
-    val_losses.append(val_mse)
-
-    if epoch % 500 == 0:
-        print(f"Epoch {epoch}: train_mse={train_mse:.4f}, val_mse={val_mse:.4f}")
+# Fit mô hình bậc cao trực tiếp để tạo ví dụ overfitting rõ ràng.
+m, b = fit_polynomial_least_squares(X_train_poly, y_train)
+train_losses = [compute_mse(y_train, predict_poly(X_train_poly, m, b))]
+val_losses = [compute_mse(y_val, predict_poly(X_val_poly, m, b))]
 
 print(f"\nFinal train MSE: {train_losses[-1]:.4f}")
 print(f"Final val MSE:   {val_losses[-1]:.4f}")
@@ -138,19 +124,25 @@ print(f"Final val MSE:   {val_losses[-1]:.4f}")
 
 # ===== Bước 4: Trực quan hóa overfitting =====
 
-# 4a. Loss curve: train vs validate theo epoch
-plt.figure(figsize=(8, 5))
-plt.plot(train_losses, label="Train Loss")
-plt.plot(val_losses, label="Validation Loss")
-plt.xlabel("Epoch")
+# 4a. Mo hinh overfit duoc fit truc tiep, vi vay dung bieu do cot MSE cuoi.
+plt.figure(figsize=(7, 5))
+plt.bar(
+    ["Train", "Validation"],
+    [train_losses[-1], val_losses[-1]],
+    color=["#2563eb", "#f59e0b"],
+)
 plt.ylabel("MSE")
-plt.title(f"Loss Curve (Overfitting) - Degree = {DEGREE}")
-plt.legend()
-plt.grid(True)
+plt.title(f"Final MSE - Overfitting (Degree = {DEGREE})")
+plt.grid(axis="y")
 plt.show()
 
 # 4b. Scatter du lieu + duong cong du doan
-x_range = np.linspace(train_data["x_norm"].min(), train_data["x_norm"].max(), 300)
+all_x = pd.concat([
+    train_data["x_norm"],
+    val_data["x_norm"],
+    test_data["x_norm"],
+])
+x_range = np.linspace(all_x.min(), all_x.max(), 500)
 X_range_poly_raw = build_polynomial_features(x_range, DEGREE)
 X_range_poly = X_range_poly_raw / overfit_scales
 y_range_pred = predict_poly(X_range_poly, m, b)
@@ -164,6 +156,14 @@ plt.plot(x_range, y_range_pred, color="red", label=f"Fitted curve (degree={DEGRE
 plt.xlabel("x_norm (dien tich da chuan hoa)")
 plt.ylabel("y_gia_nha_ty")
 plt.title("Duong cong du doan - Overfitting")
+plt.ylim(
+    min(train_data["y_gia_nha_ty"].min(),
+        val_data["y_gia_nha_ty"].min(),
+        test_data["y_gia_nha_ty"].min()) - 0.5,
+    max(train_data["y_gia_nha_ty"].max(),
+        val_data["y_gia_nha_ty"].max(),
+        test_data["y_gia_nha_ty"].max()) + 0.5,
+)
 plt.legend()
 plt.grid(True)
 plt.show()
@@ -181,6 +181,10 @@ def train_polynomial(degree, X_train_poly, y_train, X_val_poly, y_val,
     b = 0.0
     train_losses = []
     val_losses = []
+    best_m = m.copy()
+    best_b = b
+    best_val_loss = float("inf")
+    best_epoch = 0
 
     n = len(y_train)
 
@@ -201,12 +205,18 @@ def train_polynomial(degree, X_train_poly, y_train, X_val_poly, y_val,
         train_losses.append(train_mse)
         val_losses.append(val_mse)
 
-    return m, b, train_losses, val_losses
+        if val_mse < best_val_loss:
+            best_val_loss = val_mse
+            best_m = m.copy()
+            best_b = b
+            best_epoch = epoch
+
+    return best_m, best_b, train_losses, val_losses, best_epoch
 
 
 print("=== Thu nghiem nhieu bac da thuc (chon degree tot nhat theo validate) ===")
 
-degrees_to_try = range(1, 11)
+degrees_to_try = range(1, 8)
 L_search = 0.01
 epochs_search = 3000
 
@@ -217,23 +227,25 @@ for d in degrees_to_try:
     X_va_raw = build_polynomial_features(val_data["x_norm"], d)
     X_tr, X_va, degree_scales = scale_polynomial_features(X_tr_raw, X_va_raw)
 
-    m_d, b_d, tr_losses, va_losses = train_polynomial(
+    m_d, b_d, tr_losses, va_losses, best_epoch = train_polynomial(
         d, X_tr, y_train, X_va, y_val, L_search, epochs_search
     )
 
-    final_val_loss = va_losses[-1]
+    best_val_loss = va_losses[best_epoch]
     results[d] = {
         "m": m_d, "b": b_d,
         "train_losses": tr_losses, "val_losses": va_losses,
-        "final_val_loss": final_val_loss,
+        "best_epoch": best_epoch,
+        "best_val_loss": best_val_loss,
         "scales": degree_scales
     }
 
-    print(f"Degree {d:2d}: final_train_mse={tr_losses[-1]:.4f}, "
-          f"final_val_mse={final_val_loss:.4f}")
+    print(f"Degree {d:2d}: best_train_mse={tr_losses[best_epoch]:.4f}, "
+          f"best_val_mse={best_val_loss:.4f} "
+          f"(epoch={best_epoch})")
 
-# Chon degree co val loss thap nhat
-best_degree = min(results, key=lambda d: results[d]["final_val_loss"])
+# Chon degree co validation loss thap nhat
+best_degree = min(results, key=lambda d: results[d]["best_val_loss"])
 print(f"\n>>> Degree tot nhat theo validate set: {best_degree}")
 
 GOOD_DEGREE = best_degree
@@ -243,6 +255,7 @@ good_b = good_result["b"]
 good_train_losses = good_result["train_losses"]
 good_val_losses = good_result["val_losses"]
 good_scales = good_result["scales"]
+good_best_epoch = good_result["best_epoch"]
 
 X_test_poly_overfit_raw = build_polynomial_features(test_data["x_norm"], DEGREE)
 X_test_poly_overfit = X_test_poly_overfit_raw / overfit_scales
@@ -257,22 +270,29 @@ test_mse_good = compute_mse(
 )
 
 print("\n===== KET QUA CUOI CUNG TREN TEST SET =====")
+print(f"Mo hinh OVERFIT (degree={DEGREE}):     train_mse = "
+    f"{compute_mse(y_train, predict_poly(X_train_poly, m, b)):.4f}")
 print(f"Mo hinh OVERFIT (degree={DEGREE}):     test_mse = {test_mse_overfit:.4f}")
+print(f"Mo hinh GOOD FIT (degree={GOOD_DEGREE}): train_mse = "
+    f"{good_train_losses[good_best_epoch]:.4f}")
+print(f"Mo hinh GOOD FIT (degree={GOOD_DEGREE}): val_mse = "
+    f"{good_val_losses[good_best_epoch]:.4f}")
 print(f"Mo hinh GOOD FIT (degree={GOOD_DEGREE}): test_mse = {test_mse_good:.4f}")
 
 
 # ===== Bước 7: So sánh trực quan tổng kết =====
 
-# 7a. So sanh Loss Curve: Overfit vs Good Fit
+# 7a. So sanh MSE cuoi cua overfit va loss curve cua good fit
 fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
-axes[0].plot(train_losses, label="Train Loss")
-axes[0].plot(val_losses, label="Validation Loss")
+axes[0].bar(
+    ["Train", "Validation"],
+    [train_losses[-1], val_losses[-1]],
+    color=["#2563eb", "#f59e0b"],
+)
 axes[0].set_title(f"OVERFIT - Degree = {DEGREE}")
-axes[0].set_xlabel("Epoch")
 axes[0].set_ylabel("MSE")
-axes[0].legend()
-axes[0].grid(True)
+axes[0].grid(axis="y")
 
 axes[1].plot(good_train_losses, label="Train Loss")
 axes[1].plot(good_val_losses, label="Validation Loss")
@@ -286,7 +306,12 @@ plt.tight_layout()
 plt.show()
 
 # 7b. So sanh duong cong du doan: Overfit vs Good Fit
-x_range = np.linspace(train_data["x_norm"].min(), train_data["x_norm"].max(), 300)
+all_x = pd.concat([
+    train_data["x_norm"],
+    val_data["x_norm"],
+    test_data["x_norm"],
+])
+x_range = np.linspace(all_x.min(), all_x.max(), 500)
 
 X_range_overfit_raw = build_polynomial_features(x_range, DEGREE)
 X_range_overfit = X_range_overfit_raw / overfit_scales
@@ -309,6 +334,14 @@ for ax, y_range_pred, title in [
     ax.scatter(test_data["x_norm"], test_data["y_gia_nha_ty"],
                color="green", label="Test", alpha=0.6)
     ax.plot(x_range, y_range_pred, color="red", label="Fitted curve")
+    ax.set_ylim(
+        min(train_data["y_gia_nha_ty"].min(),
+            val_data["y_gia_nha_ty"].min(),
+            test_data["y_gia_nha_ty"].min()) - 0.5,
+        max(train_data["y_gia_nha_ty"].max(),
+            val_data["y_gia_nha_ty"].max(),
+            test_data["y_gia_nha_ty"].max()) + 0.5,
+    )
     ax.set_title(title)
     ax.set_xlabel("x_norm")
     ax.set_ylabel("y_gia_nha_ty")
