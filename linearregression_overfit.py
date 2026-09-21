@@ -1,352 +1,225 @@
-from pathlib import Path
-
 import pandas as pd
-import matplotlib.pyplot as plt
 import numpy as np
 
+#Ham dua du lieu thanh mang luy thua cho da thuc  
+def create_polynomial_features(X, degree):
+    features = []
 
-train_data = pd.read_csv(Path(__file__).with_name('house_price_dataset.csv'))
-val_data   = pd.read_csv(Path(__file__).with_name('house_price_dataset_validate.csv'))
-test_data  = pd.read_csv(Path(__file__).with_name('house_price_dataset_test.csv'))
+    for x in X:
+        row = []
 
+        for d in range(degree + 1):
+            row.append(x ** d)
 
+        features.append(row)
 
-print(f"So dong train: {len(train_data)}")
-print(f"So dong validate: {len(val_data)}")
-print(f"So dong test: {len(test_data)}")
+    return np.array(features)
 
-print(train_data.head())
+def standardize(X_train, X_test):
+    # Tính mean và std từ dữ liệu Train
+    mean = X_train[:, 1:].mean(axis=0)
+    std = X_train[:, 1:].std(axis=0)
 
+    # Chuẩn hóa Train
+    X_train_scaled = X_train.astype(float, copy=True)
+    X_train_scaled[:, 1:] = (
+        X_train[:, 1:] - mean
+    ) / std
 
-# ===== Bước 2: Chuẩn hóa dữ liệu (z-score) =====
-# QUAN TRỌNG: mean và std chỉ được tính trên tập train,
-# sau đó dùng chung cho val và test (không tính lại)
+    # Chuẩn hóa Test bằng mean và std của Train
+    X_test_scaled = X_test.astype(float, copy=True)
+    X_test_scaled[:, 1:] = (
+        X_test[:, 1:] - mean
+    ) / std
 
-x_mean = train_data["x_dien_tich_m2"].mean()
-x_std  = train_data["x_dien_tich_m2"].std()
+    return X_train_scaled, X_test_scaled
 
-print(f"\nx_mean (train) = {x_mean}")
-print(f"x_std  (train) = {x_std}")
+def ridge_gradient_descent(X, y, learning_rate, epochs, lambda_):
+    m, n = X.shape
 
-def normalize_x(x, mean, std):
-    return (x - mean) / std
-
-# Tạo cột x đã chuẩn hóa cho cả 3 tập
-train_data["x_norm"] = normalize_x(train_data["x_dien_tich_m2"], x_mean, x_std)
-val_data["x_norm"]   = normalize_x(val_data["x_dien_tich_m2"], x_mean, x_std)
-test_data["x_norm"]  = normalize_x(test_data["x_dien_tich_m2"], x_mean, x_std)
-
-print("\n--- Sau khi chuan hoa ---")
-print(train_data[["x_dien_tich_m2", "x_norm"]].head())
-
-# Kiem tra: x_norm cua train phai co mean ~ 0, std ~ 1
-print(f"\nKiem tra train x_norm: mean={train_data['x_norm'].mean():.4f}, "
-      f"std={train_data['x_norm'].std():.4f}")
-
-# ===== Bước 3: Xây dựng feature đa thức + Gradient Descent overfitting =====
-
-DEGREE = 40  # bậc rất cao để tạo mô hình nội suy overfitting
-
-def build_polynomial_features(x, degree):
-    """
-    Tra ve ma tran cac dac trung [x, x^2, x^3, ..., x^degree]
-    x: pandas Series hoac numpy array (da chuan hoa)
-    """
-    x = np.array(x)
-    n = len(x)
-    X_poly = np.zeros((n, degree))
-    for d in range(1, degree + 1):
-        X_poly[:, d - 1] = x ** d
-    return X_poly
-
-
-def scale_polynomial_features(X_train, X_other):
-    """Scale polynomial columns using only statistics from the train set."""
-    feature_scales = np.std(X_train, axis=0)
-    feature_scales[feature_scales == 0] = 1
-    return X_train / feature_scales, X_other / feature_scales, feature_scales
-
-
-def compute_mse(y_true, y_pred):
-    return np.mean((y_true - y_pred) ** 2)
-
-
-def predict_poly(X_poly, m, b):
-    """
-    X_poly: ma tran (n, degree)
-    m: vector he so (degree,)
-    """
-    return X_poly @ m + b
-
-
-def gradient_descent_poly(X_poly, y, m, b, L):
-    n = len(y)
-
-    prediction = predict_poly(X_poly, m, b)
-    error = y - prediction
-
-    # Gradient cho tung he so m_j (vector hoa thay vi vong lap)
-    m_gradient = -(2 / n) * (X_poly.T @ error)
-    b_gradient = -(2 / n) * np.sum(error)
-
-    m_new = m - L * m_gradient
-    b_new = b - L * b_gradient
-
-    return m_new, b_new
-
-
-def fit_polynomial_least_squares(X_poly, y):
-    """Fit mô hình đa thức bậc cao để minh họa nội suy trên train set."""
-    X_with_bias = np.column_stack([np.ones(len(X_poly)), X_poly])
-    coefficients = np.linalg.lstsq(X_with_bias, y, rcond=None)[0]
-    return coefficients[1:], coefficients[0]
-
-
-# Chuan bi du lieu dang numpy
-X_train_poly_raw = build_polynomial_features(train_data["x_norm"], DEGREE)
-y_train = train_data["y_gia_nha_ty"].to_numpy()
-
-X_val_poly_raw = build_polynomial_features(val_data["x_norm"], DEGREE)
-y_val = val_data["y_gia_nha_ty"].to_numpy()
-
-X_train_poly, X_val_poly, overfit_scales = scale_polynomial_features(
-    X_train_poly_raw, X_val_poly_raw
-)
-
-# Fit mô hình bậc cao trực tiếp để tạo ví dụ overfitting rõ ràng.
-m, b = fit_polynomial_least_squares(X_train_poly, y_train)
-train_losses = [compute_mse(y_train, predict_poly(X_train_poly, m, b))]
-val_losses = [compute_mse(y_val, predict_poly(X_val_poly, m, b))]
-
-print(f"\nFinal train MSE: {train_losses[-1]:.4f}")
-print(f"Final val MSE:   {val_losses[-1]:.4f}")
-
-
-# ===== Bước 4: Trực quan hóa overfitting =====
-
-# 4a. Mo hinh overfit duoc fit truc tiep, vi vay dung bieu do cot MSE cuoi.
-plt.figure(figsize=(7, 5))
-plt.bar(
-    ["Train", "Validation"],
-    [train_losses[-1], val_losses[-1]],
-    color=["#2563eb", "#f59e0b"],
-)
-plt.ylabel("MSE")
-plt.title(f"Final MSE - Overfitting (Degree = {DEGREE})")
-plt.grid(axis="y")
-plt.show()
-
-# 4b. Scatter du lieu + duong cong du doan
-all_x = pd.concat([
-    train_data["x_norm"],
-    val_data["x_norm"],
-    test_data["x_norm"],
-])
-x_range = np.linspace(all_x.min(), all_x.max(), 500)
-X_range_poly_raw = build_polynomial_features(x_range, DEGREE)
-X_range_poly = X_range_poly_raw / overfit_scales
-y_range_pred = predict_poly(X_range_poly, m, b)
-
-plt.figure(figsize=(8, 5))
-plt.scatter(train_data["x_norm"], train_data["y_gia_nha_ty"],
-            color="blue", label="Train data", alpha=0.6)
-plt.scatter(val_data["x_norm"], val_data["y_gia_nha_ty"],
-            color="orange", label="Validate data", alpha=0.6)
-plt.plot(x_range, y_range_pred, color="red", label=f"Fitted curve (degree={DEGREE})")
-plt.xlabel("x_norm (dien tich da chuan hoa)")
-plt.ylabel("y_gia_nha_ty")
-plt.title("Duong cong du doan - Overfitting")
-plt.ylim(
-    min(train_data["y_gia_nha_ty"].min(),
-        val_data["y_gia_nha_ty"].min(),
-        test_data["y_gia_nha_ty"].min()) - 0.5,
-    max(train_data["y_gia_nha_ty"].max(),
-        val_data["y_gia_nha_ty"].max(),
-        test_data["y_gia_nha_ty"].max()) + 0.5,
-)
-plt.legend()
-plt.grid(True)
-plt.show()
-
-# ----- 5a. Cách 1: Thử nhiều bậc đa thức, chọn bậc có val_loss thấp nhất -----
-
-def train_polynomial(degree, X_train_poly, y_train, X_val_poly, y_val,
-                      L, epochs, lam=0.0):
-    """
-    Train mot mo hinh polynomial regression.
-    lam: he so regularization L2 (Ridge). lam=0 -> khong regularization.
-    Tra ve: m, b, train_losses, val_losses
-    """
-    m = np.zeros(degree)
-    b = 0.0
-    train_losses = []
-    val_losses = []
-    best_m = m.copy()
-    best_b = b
-    best_val_loss = float("inf")
-    best_epoch = 0
-
-    n = len(y_train)
+    w = np.zeros(n)
+    loss_history = []
 
     for epoch in range(epochs):
-        prediction = predict_poly(X_train_poly, m, b)
-        error = y_train - prediction
 
-        # Gradient co them so hang regularization L2: + (2*lam/n)*m
-        m_gradient = -(2 / n) * (X_train_poly.T @ error) + (2 * lam / n) * m
-        b_gradient = -(2 / n) * np.sum(error)
+        # Dự đoán
+        y_pred = X @ w
 
-        m = m - L * m_gradient
-        b = b - L * b_gradient
+        # Sai số
+        error = y_pred - y
 
-        train_mse = compute_mse(y_train, predict_poly(X_train_poly, m, b))
-        val_mse = compute_mse(y_val, predict_poly(X_val_poly, m, b))
+        # Ridge Loss
+        loss = np.sum(error ** 2) / (2 * m) \
+               + (lambda_ / 2) * np.sum(w[1:] ** 2)
 
-        train_losses.append(train_mse)
-        val_losses.append(val_mse)
+        loss_history.append(loss)
 
-        if val_mse < best_val_loss:
-            best_val_loss = val_mse
-            best_m = m.copy()
-            best_b = b
-            best_epoch = epoch
+        # Gradient của MSE
+        gradient = (X.T @ error) / m
 
-    return best_m, best_b, train_losses, val_losses, best_epoch
+        # Gradient của Ridge
+        # Không phạt w[0] (bias)
+        gradient[1:] += lambda_ * w[1:]
+
+        # Cập nhật trọng số
+        w = w - learning_rate * gradient
+
+    return w, loss_history
+
+def gradient_descent(X, y, learning_rate, epochs):
+    m, n = X.shape
+
+    # Khởi tạo tất cả trọng số bằng 0
+    w = np.zeros(n)
+
+    loss_history = []
+
+    for epoch in range(epochs):
+
+        # 1. Dự đoán
+        y_pred = X @ w
+
+        # 2. Tính sai số
+        error = y_pred - y
+
+        # 3. Tính Loss
+        loss = np.sum(error ** 2) / (2 * m)
+
+        loss_history.append(loss)
+
+        # 4. Tính Gradient
+        gradient = (X.T @ error) / m
+
+        # 5. Cập nhật trọng số
+        w = w - learning_rate * gradient
+        if epoch % 1000 == 0:
+            print(epoch)
+
+    return w, loss_history
+
+def predict(X, w):
+    return X @ w
+
+def mse(y_true, y_pred):
+    m = len(y_true)
+
+    return np.sum((y_pred - y_true) ** 2) / m
 
 
-print("=== Thu nghiem nhieu bac da thuc (chon degree tot nhat theo validate) ===")
 
-degrees_to_try = range(1, 8)
-L_search = 0.01
-epochs_search = 3000
+#Main
 
-results = {}
+# 1. Đọc dữ liệu
+train_data = pd.read_csv("train.csv")
+test_data = pd.read_csv("test.csv")
 
-for d in degrees_to_try:
-    X_tr_raw = build_polynomial_features(train_data["x_norm"], d)
-    X_va_raw = build_polynomial_features(val_data["x_norm"], d)
-    X_tr, X_va, degree_scales = scale_polynomial_features(X_tr_raw, X_va_raw)
+X_train = train_data["area"].values
+y_train = train_data["price"].values
 
-    m_d, b_d, tr_losses, va_losses, best_epoch = train_polynomial(
-        d, X_tr, y_train, X_va, y_val, L_search, epochs_search
-    )
+X_test = test_data["area"].values
+y_test = test_data["price"].values
 
-    best_val_loss = va_losses[best_epoch]
-    results[d] = {
-        "m": m_d, "b": b_d,
-        "train_losses": tr_losses, "val_losses": va_losses,
-        "best_epoch": best_epoch,
-        "best_val_loss": best_val_loss,
-        "scales": degree_scales
-    }
+# 2. Tạo Polynomial Features
+degree = 12
 
-    print(f"Degree {d:2d}: best_train_mse={tr_losses[best_epoch]:.4f}, "
-          f"best_val_mse={best_val_loss:.4f} "
-          f"(epoch={best_epoch})")
-
-# Chon degree co validation loss thap nhat
-best_degree = min(results, key=lambda d: results[d]["best_val_loss"])
-print(f"\n>>> Degree tot nhat theo validate set: {best_degree}")
-
-GOOD_DEGREE = best_degree
-good_result = results[GOOD_DEGREE]
-good_m = good_result["m"]
-good_b = good_result["b"]
-good_train_losses = good_result["train_losses"]
-good_val_losses = good_result["val_losses"]
-good_scales = good_result["scales"]
-good_best_epoch = good_result["best_epoch"]
-
-X_test_poly_overfit_raw = build_polynomial_features(test_data["x_norm"], DEGREE)
-X_test_poly_overfit = X_test_poly_overfit_raw / overfit_scales
-y_test = test_data["y_gia_nha_ty"].to_numpy()
-
-X_test_poly_good_raw = build_polynomial_features(test_data["x_norm"], GOOD_DEGREE)
-X_test_poly_good = X_test_poly_good_raw / good_scales
-
-test_mse_overfit = compute_mse(y_test, predict_poly(X_test_poly_overfit, m, b))
-test_mse_good = compute_mse(
-    y_test, predict_poly(X_test_poly_good, good_m, good_b)
+# Ma trận X test sau khi nhân với x, x^2,...x^n
+X_train_poly = create_polynomial_features(
+    X_train, degree
+)
+# Ma trận X test sau khi nhân với x, x^2,...x^n
+X_test_poly = create_polynomial_features(
+    X_test, degree
 )
 
-print("\n===== KET QUA CUOI CUNG TREN TEST SET =====")
-print(f"Mo hinh OVERFIT (degree={DEGREE}):     train_mse = "
-    f"{compute_mse(y_train, predict_poly(X_train_poly, m, b)):.4f}")
-print(f"Mo hinh OVERFIT (degree={DEGREE}):     test_mse = {test_mse_overfit:.4f}")
-print(f"Mo hinh GOOD FIT (degree={GOOD_DEGREE}): train_mse = "
-    f"{good_train_losses[good_best_epoch]:.4f}")
-print(f"Mo hinh GOOD FIT (degree={GOOD_DEGREE}): val_mse = "
-    f"{good_val_losses[good_best_epoch]:.4f}")
-print(f"Mo hinh GOOD FIT (degree={GOOD_DEGREE}): test_mse = {test_mse_good:.4f}")
-
-
-# ===== Bước 7: So sánh trực quan tổng kết =====
-
-# 7a. So sanh MSE cuoi cua overfit va loss curve cua good fit
-fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-
-axes[0].bar(
-    ["Train", "Validation"],
-    [train_losses[-1], val_losses[-1]],
-    color=["#2563eb", "#f59e0b"],
+# 3. Standardize, chuẩn hóa ma trận x 
+X_train_scaled, X_test_scaled = standardize(
+    X_train_poly,
+    X_test_poly
 )
-axes[0].set_title(f"OVERFIT - Degree = {DEGREE}")
-axes[0].set_ylabel("MSE")
-axes[0].grid(axis="y")
 
-axes[1].plot(good_train_losses, label="Train Loss")
-axes[1].plot(good_val_losses, label="Validation Loss")
-axes[1].set_title(f"GOOD FIT - Degree = {GOOD_DEGREE}")
-axes[1].set_xlabel("Epoch")
-axes[1].set_ylabel("MSE")
-axes[1].legend()
-axes[1].grid(True)
 
-plt.tight_layout()
-plt.show()
+# 4. Train bằng Gradient Descent
+learning_rate = 0.01
+epochs = 30000
 
-# 7b. So sanh duong cong du doan: Overfit vs Good Fit
-all_x = pd.concat([
-    train_data["x_norm"],
-    val_data["x_norm"],
-    test_data["x_norm"],
-])
-x_range = np.linspace(all_x.min(), all_x.max(), 500)
+w, loss_history = gradient_descent(
+    X_train_scaled,
+    y_train,
+    learning_rate,
+    epochs
+)
 
-X_range_overfit_raw = build_polynomial_features(x_range, DEGREE)
-X_range_overfit = X_range_overfit_raw / overfit_scales
-y_range_overfit = predict_poly(X_range_overfit, m, b)
+# 5. Dự đoán
+y_train_pred = predict(
+    X_train_scaled,
+    w
+)
 
-X_range_good_raw = build_polynomial_features(x_range, GOOD_DEGREE)
-X_range_good = X_range_good_raw / good_scales
-y_range_good = predict_poly(X_range_good, good_m, good_b)
+y_test_pred = predict(
+    X_test_scaled,
+    w
+)
 
-fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+# 6. Tính Error
+train_error = mse(
+    y_train,
+    y_train_pred
+)
 
-for ax, y_range_pred, title in [
-    (axes[0], y_range_overfit, f"OVERFIT - Degree = {DEGREE}"),
-    (axes[1], y_range_good, f"GOOD FIT - Degree = {GOOD_DEGREE}"),
-]:
-    ax.scatter(train_data["x_norm"], train_data["y_gia_nha_ty"],
-               color="blue", label="Train", alpha=0.6)
-    ax.scatter(val_data["x_norm"], val_data["y_gia_nha_ty"],
-               color="orange", label="Validate", alpha=0.6)
-    ax.scatter(test_data["x_norm"], test_data["y_gia_nha_ty"],
-               color="green", label="Test", alpha=0.6)
-    ax.plot(x_range, y_range_pred, color="red", label="Fitted curve")
-    ax.set_ylim(
-        min(train_data["y_gia_nha_ty"].min(),
-            val_data["y_gia_nha_ty"].min(),
-            test_data["y_gia_nha_ty"].min()) - 0.5,
-        max(train_data["y_gia_nha_ty"].max(),
-            val_data["y_gia_nha_ty"].max(),
-            test_data["y_gia_nha_ty"].max()) + 0.5,
-    )
-    ax.set_title(title)
-    ax.set_xlabel("x_norm")
-    ax.set_ylabel("y_gia_nha_ty")
-    ax.legend()
-    ax.grid(True)
+test_error = mse(
+    y_test,
+    y_test_pred
+)
 
-plt.tight_layout()
-plt.show()
+# 7. In kết quả
+print("===== KHÔNG DÙNG RIDGE =====")
+print("Train Error:", train_error)
+print("Test Error:", test_error)
+
+lambda_ = 0.2
+
+w_ridge, ridge_loss_history = ridge_gradient_descent(
+    X_train_scaled,
+    y_train,
+    learning_rate,
+    epochs,
+    lambda_
+)
+
+
+# ==============================
+# 8. Dự đoán bằng Ridge
+# ==============================
+
+y_train_pred_ridge = predict(
+    X_train_scaled,
+    w_ridge
+)
+
+y_test_pred_ridge = predict(
+    X_test_scaled,
+    w_ridge
+)
+
+
+# ==============================
+# 9. Tính Error của Ridge
+# ==============================
+
+train_error_ridge = mse(
+    y_train,
+    y_train_pred_ridge
+)
+
+test_error_ridge = mse(
+    y_test,
+    y_test_pred_ridge
+)
+
+
+print("\n===== DÙNG RIDGE =====")
+print("Train Error:", train_error_ridge)
+print("Test Error:", test_error_ridge)
+
+
+
