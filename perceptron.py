@@ -2,7 +2,6 @@
 # list of points 
 import numpy as np 
 import matplotlib.pyplot as plt
-from scipy.spatial.distance import cdist
 np.random.seed(2)
 
 means = [[2, 2], [4, 2]]
